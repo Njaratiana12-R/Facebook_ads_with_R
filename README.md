@@ -81,8 +81,8 @@ skim(raw)
 ```
 
 **Captures / sorties :**
-- ![Glimpse](plots/glimpse.jpg)
-- ![Skim](plots/skim_raw.jpg)
+- ![Glimpse](plots/glimpse.JPG)
+- ![Skim](plots/skim_raw.JPG)
 
 ---
 
