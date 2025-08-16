@@ -116,6 +116,7 @@ ggplot(by_demo, aes(x = age, y = cpa, fill = gender)) +
 ```
 
 **Visuel :**
+![Screeshoot R](screenshoot/Analyze.JPG)
 ![CPA par âge et genre](plots/cpa_age_gender.png)
 
 ---
@@ -142,6 +143,7 @@ ggplot(top_interest, aes(x = reorder(as.factor(interest), cpa), y = cpa)) +
 ```
 
 **Visuel :**
+![Screeshoot R](screenshoot/Interest1Perform.JPG)
 ![Top Intérêts](plots/interest_performance.png)
 
 ---
@@ -159,6 +161,7 @@ forecast::autoplot(forecast_sales) +
 ```
 
 **Visuel :**
+![Screeshoot R](screenshoot/Sales1predict.JPG)
 ![Prévision 14j](plots/sales_forecast.png)
 
 > **Limite à connaître :** la série contient beaucoup de zéros/petits volumes. Tester aussi `fable` (ETS/ARIMA) ou des agrégations par jour/semaine pour stabiliser.
