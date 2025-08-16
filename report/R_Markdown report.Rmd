@@ -1,0 +1,193 @@
+---
+title: "FB Ads – Rapport de performance"
+author: "Njaratiana"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: cosmo
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.width = 8, fig.height = 5
+)
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(here)
+library(forecast)
+```
+
+## 1) Import des données
+```{r import}
+path <- here::here("data","Fb_report.csv")
+raw <- readr::read_csv(path, show_col_types = FALSE) |> janitor::clean_names()
+glimpse(raw)
+skimr::skim(raw)
+```
+
+
+## 2) Préparation et nettoyage
+```{r process_summary}
+data <- raw %>%
+  distinct() %>%
+  mutate(
+    # Convertit en entiers UNIQUEMENT les colonnes numériques si elles existent
+    across(
+      .cols = any_of(c("impressions","clicks","total_conversion","approved_conversion")),
+      .fns  = ~ suppressWarnings(as.integer(.x))
+    ),
+    spent  = suppressWarnings(as.double(spent)),
+    age    = as.factor(age),
+    gender = as.factor(gender),
+    interest = as.factor(interest),
+    ctr   = if_else(impressions > 0, clicks / impressions, NA_real_),
+    cpc   = if_else(clicks > 0, spent / clicks, NA_real_),
+    cpm   = if_else(impressions > 0, spent / impressions * 1000, NA_real_),
+    conv_rate = if_else(clicks > 0, total_conversion / clicks, NA_real_),
+    cpa   = if_else(approved_conversion > 0, spent / approved_conversion, NA_real_)
+  )
+
+summary_tbl <- data %>%
+  summarise(
+    jours          = dplyr::n(),
+    impressions    = sum(impressions, na.rm = TRUE),
+    clicks         = sum(clicks, na.rm = TRUE),
+    spent          = sum(spent, na.rm = TRUE),
+    total_conv     = sum(total_conversion, na.rm = TRUE),
+    approved_conv  = sum(approved_conversion, na.rm = TRUE),
+    ctr_global = sum(clicks, na.rm = TRUE) /
+                 pmax(sum(impressions, na.rm = TRUE), 1),
+    cpc_global = sum(spent,  na.rm = TRUE) /
+                 pmax(sum(clicks,      na.rm = TRUE), 1),
+    cpa_global = sum(spent,  na.rm = TRUE) /
+                 pmax(sum(approved_conversion, na.rm = TRUE), 1)
+  )
+
+summary_tbl
+```
+## 3) CPA par âge et genre
+```{r by_demo, message=FALSE, warning=FALSE}
+# Agrégats par âge & genre + métriques robustes
+by_demo <- data %>%
+  # on écarte les lignes sans âge/genre pour le graphique
+  filter(!is.na(age), !is.na(gender)) %>%
+  group_by(age, gender, .drop = FALSE) %>%
+  summarise(
+    impressions = sum(impressions, na.rm = TRUE),
+    clicks      = sum(clicks,      na.rm = TRUE),
+    spent       = sum(spent,       na.rm = TRUE),
+    approved    = sum(approved_conversion, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ctr = clicks / pmax(impressions, 1),
+    cpc = spent  / pmax(clicks,      1),
+    cpm = spent  / pmax(impressions, 1) * 1000,
+    cpa = spent  / pmax(approved,    1)
+  )
+
+# Aperçu du tableau agrégé
+by_demo
+
+# Données prêtes pour le graphique (on évite Inf/NaN)
+plot_demo <- by_demo %>% filter(is.finite(cpa))
+
+# Si les âges sont des textes non ordonnés, on force un ordre numérique si possible
+if (!is.ordered(plot_demo$age)) {
+  # essaie de convertir "18-24", "25-34" etc. en ordre logique par la borne basse
+  plot_demo <- plot_demo %>%
+    mutate(.ord_age = suppressWarnings(readr::parse_number(as.character(age)))) %>%
+    arrange(.ord_age) %>%
+    mutate(age = factor(age, levels = unique(age))) %>%
+    select(-.ord_age)
+}
+
+# Graphique CPA par âge et genre
+ggplot(plot_demo, aes(x = age, y = cpa, fill = gender)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  labs(title = "CPA par âge et genre", x = "Âge", y = "CPA") +
+  coord_cartesian(ylim = c(0, max(plot_demo$cpa[is.finite(plot_demo$cpa)], na.rm = TRUE) * 1.1)) +
+  theme_minimal()
+```
+
+## 4) Top 10 centres d’intérêt (CPA le plus bas)
+```{r by_interest, message=FALSE, warning=FALSE}
+# Agrégats par intérêt + métriques
+by_interest <- data %>%
+  filter(!is.na(interest)) %>%                     # on écarte les intérêts manquants
+  group_by(interest, .drop = FALSE) %>%
+  summarise(
+    impressions = sum(impressions, na.rm = TRUE),
+    clicks      = sum(clicks,      na.rm = TRUE),
+    spent       = sum(spent,       na.rm = TRUE),
+    approved    = sum(approved_conversion, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ctr = clicks / pmax(impressions, 1),
+    cpc = spent  / pmax(clicks,      1),
+    cpa = spent  / pmax(approved,    1)
+  ) %>%
+  arrange(cpa)
+
+# Top 10 intérêts les plus rentables (CPA le plus bas), on évite Inf/NaN
+top_interest <- by_interest %>%
+  filter(is.finite(cpa)) %>%
+  slice_min(order_by = cpa, n = 10, with_ties = FALSE)
+
+# Aperçu du tableau sélectionné
+top_interest
+
+# Graphique (si on a des lignes à tracer)
+if (nrow(top_interest) > 0) {
+  ggplot(top_interest, aes(x = reorder(as.factor(interest), cpa), y = cpa)) +
+    geom_col(width = 0.7) +
+    coord_flip() +
+    labs(title = "Top 10 intérêts – CPA le plus bas", x = "Intérêt", y = "CPA") +
+    theme_minimal()
+} else {
+  message("Pas de CPA finie (toutes les lignes ont approved = 0 ou manquent) : graphique non tracé.")
+}
+```
+
+## 5) Prévision des ventes (14 prochains jours
+```{r forecast_sales, message=FALSE, warning=FALSE}
+# Remplace NA par 0
+approved_vec <- data$approved_conversion
+approved_vec[is.na(approved_vec)] <- 0
+
+# Vérification du nombre de points
+if (length(approved_vec) >= 3 && sum(approved_vec) > 0) {
+  
+  # Série temporelle hebdomadaire (7 observations = 1 cycle)
+  sales_ts <- ts(approved_vec, frequency = 7)
+  
+  # Ajustement ARIMA automatique
+  fit <- auto.arima(sales_ts)
+  
+  # Prévision sur 14 périodes (ici 14 jours)
+  forecast_sales <- forecast(fit, h = 14)
+  
+  # Aperçu numérique
+  forecast_sales
+  
+  # Graphique de prévision
+  autoplot(forecast_sales) +
+    labs(
+      title = "Prévision des ventes (14 prochains jours)",
+      y = "Ventes prévues"
+    ) +
+    theme_minimal()
+  
+} else {
+  message("⚠️ Pas assez de données ou toutes les conversions sont nulles — prévision non réalisée.")
+}
+```
+
+
+
